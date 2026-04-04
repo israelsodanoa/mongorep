@@ -2,6 +2,7 @@ package mongorep
 
 import (
 	"context"
+	"iter"
 	"log"
 
 	"reflect"
@@ -21,6 +22,8 @@ type (
 	Repository[T any] interface {
 		GetAll(ctx context.Context,
 			filter map[string]any) []T
+		GetIter(ctx context.Context,
+			filter map[string]any) iter.Seq[T]
 		GetAllSkipTake(ctx context.Context,
 			filter map[string]any,
 			skip int64,
@@ -64,22 +67,33 @@ func NewMongoDbRepository[T any](
 func (r *MongoDbRepository[T]) GetAll(
 	ctx context.Context,
 	filter map[string]any) []T {
+	result := make([]T, 0)
+	for n := range r.GetIter(ctx, filter) {
+		result = append(result, n)
+	}
 
+	return result
+}
+
+func (r *MongoDbRepository[T]) GetIter(
+	ctx context.Context,
+	filter map[string]any) iter.Seq[T] {
 	cur, err := r.collection.Find(ctx, filter)
 	if err != nil {
 		panic(err)
 	}
-	result := make([]T, 0)
-	for cur.Next(ctx) {
-		var el T
-		err = cur.Decode(&el)
-		if err != nil {
-			panic(err)
-		}
-		result = append(result, el)
-	}
 
-	return result
+	return func(yield func(T) bool) {
+		for cur.Next(ctx) {
+			var el T
+			if err := cur.Decode(&el); err != nil {
+				panic(err)
+			}
+			if !yield(el) {
+				return
+			}
+		}
+	}
 }
 
 func (r *MongoDbRepository[T]) GetAllSkipTake(
